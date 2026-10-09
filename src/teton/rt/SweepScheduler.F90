@@ -1,3 +1,5 @@
+! SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved
+! SPDX-License-Identifier: MIT
 !***********************************************************************
 !                        Version 1:  09/96, PFN                        *
 !                                                                      *
@@ -34,7 +36,6 @@
    use kind_mod
    use constant_mod
    use mpif90_mod
-   use mpi
    use Size_mod
    use QuadratureList_mod
    use BoundaryList_mod
@@ -44,7 +45,7 @@
    use AngleSet_mod
 
    implicit none
-
+   include 'mpif.h'
 !  Arguments
 
    integer,          intent(in) :: cSetID

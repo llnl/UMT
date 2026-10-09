@@ -1,9 +1,28 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: MIT
+
 ############################
 # Append our default compiler flags for CMake build types.
 #
 # NOTE: CMake will pre-populate the CMAKE_<lang>_FLAGS_<buildtype> flags from the CMAKE_<lang>_FLAGS_<buildtype>_INIT
 # variable which is set by the vendor toolchain.
 ############################
+set (PGO_DIR "$ENV{HOME}/pgo_dir" CACHE PATH "Directory containing PGO profiles")
+set(PGO_MODE "OFF" CACHE STRING "PGO mode: OFF, GENERATE, USE")
+set_property(CACHE PGO_MODE PROPERTY STRINGS OFF GENERATE USE)
+
+set(_pgo_flags "")
+
+if(PGO_MODE STREQUAL "GENERATE")
+    file(MAKE_DIRECTORY "${PGO_DIR}")
+    set(_pgo_flags
+        "-fprofile-generate=\"${PGO_DIR}\" -fprofile-update=atomic")
+elseif(PGO_MODE STREQUAL "USE")
+    set(_pgo_flags "-fprofile-use=\"${PGO_DIR}\"")
+elseif(NOT PGO_MODE STREQUAL "OFF")
+    message(FATAL_ERROR "Invalid PGO_MODE: ${PGO_MODE}")
+endif()
+
 
 if (NOT "${CMAKE_BUILD_TYPE}" STREQUAL "")
    message(STATUS "Detected CMAKE_BUILD_TYPE ${CMAKE_BUILD_TYPE}")
@@ -11,7 +30,7 @@ if (NOT "${CMAKE_BUILD_TYPE}" STREQUAL "")
 
    #  --- Set C++ compiler flags ---
    if("${CMAKE_CXX_COMPILER_ID}" STREQUAL "GNU")
-      set(CMAKE_CXX_FLAGS_RELEASE "-O3 -DNDEBUG")
+      set(CMAKE_CXX_FLAGS_RELEASE "-O3 -mcpu=native -flto ${_pgo_flags} -DNDEBUG")
       set(CMAKE_CXX_FLAGS_RELWITHDEBINFO "-O3 -g -Wall -Wextra -Wshadow -fdiagnostics-show-option -DNDEBUG")
       set(CMAKE_CXX_FLAGS_DEBUG "-O0 -Wall -Wextra -Wshadow -fdiagnostics-show-option -g")
 
@@ -30,10 +49,13 @@ if (NOT "${CMAKE_BUILD_TYPE}" STREQUAL "")
 
    elseif("${CMAKE_CXX_COMPILER_ID}" STREQUAL "IntelLLVM")
       set(CMAKE_CXX_FLAGS_RELEASE "-O2 -DNDEBUG")
-      set(CMAKE_CXX_FLAGS_RELWITHDEBINFO "-O2 -g -diag-enable=remark -Wall -Wextra -Wshadow -fdiagnostics-show-option")
-      set(CMAKE_CXX_FLAGS_DEBUG "-O0 -g -diag-enable=remark -Wall -Wextra -Wshadow -fdiagnostics-show-option")
+      set(CMAKE_CXX_FLAGS_RELWITHDEBINFO "-O2 -g -diag-enable=remark")
+      set(CMAKE_CXX_FLAGS_DEBUG "-O0 -g -diag-enable=remark")
 
-   elseif("${CMAKE_CXX_COMPILER_ID}" STREQUAL "PGI")
+   elseif("${CMAKE_CXX_COMPILER_ID}" STREQUAL "NVHPC" OR "${CMAKE_CXX_COMPILER_ID}" STREQUAL "PGI")
+      set(CMAKE_CXX_FLAGS_RELEASE "-O2 -Mfprelaxed -Munroll=n:4 -mp -tp=host -DNDEBUG")
+      set(CMAKE_CXX_FLAGS_RELWITHDEBINFO "-O3 -g -tp=host -Minform=inform -DNDEBUG")
+      set(CMAKE_CXX_FLAGS_DEBUG "-O0 -g -tp=host -Mbounds")
 
    elseif("${CMAKE_CXX_COMPILER_ID}" STREQUAL "Cray")
 
@@ -41,7 +63,8 @@ if (NOT "${CMAKE_BUILD_TYPE}" STREQUAL "")
 
    # --- Set Fortran compiler flags ---
    if("${CMAKE_Fortran_COMPILER_ID}" STREQUAL "GNU")
-      set(CMAKE_Fortran_FLAGS_RELEASE "-O3 -DNDEBUG -ffree-line-length-none")
+      # SPP1 ATS-5 used -Ofast -mcpu=native instead of -O3
+      set(CMAKE_Fortran_FLAGS_RELEASE "-O3 -mcpu=native -flto ${_pgo_flags} -DNDEBUG -ffree-line-length-none")
       set(CMAKE_Fortran_FLAGS_RELWITHDEBINFO "-Wall -Wextra -fdiagnostics-show-option -fcheck=all -O3 -g -DNDEBUG -ffree-line-length-none")
       set(CMAKE_Fortran_FLAGS_DEBUG "-Wall -Wextra -fdiagnostics-show-option -fcheck=all -O0 -g -ffree-line-length-none")
 
@@ -58,7 +81,7 @@ if (NOT "${CMAKE_BUILD_TYPE}" STREQUAL "")
       #
       # We're missing explicit interfaces on all procedures with a dummy argument that has the ALLOCATABLE, ASYNCHRONOUS, OPTIONAL, POINTER, TARGET, VALUE or VOLATILE attribute.
       # This fails the Intel language standard check.  Disable checking the interfaces for now until resolved.  See
-      # https://rzlc.llnl.gov/gitlab/deterministic-transport/TRT/Teton/-/issues/296 
+      # https://rzlc.llnl.gov/gitlab/deterministic-transport/TRT/Teton/-/issues/296
    elseif("${CMAKE_Fortran_COMPILER_ID}" STREQUAL "Intel")
       set(CMAKE_Fortran_FLAGS_RELEASE "-O2 -DNDEBUG")
       set(CMAKE_Fortran_FLAGS_RELWITHDEBINFO "-O2 -g -warn all,noexternal,nointerfaces -diag-enable=remark -fpe-all=0 -traceback")
@@ -73,19 +96,21 @@ if (NOT "${CMAKE_BUILD_TYPE}" STREQUAL "")
       # Check all, at least in the latest LLVM-intel compiler, uses the adress sanitizer for "-check all", so the final link line needs some flags too.
       set(CMAKE_Fortran_FLAGS_DEBUG "-O0 -g -warn all,noexternal,nointerfaces -diag-enable=remark -fpen=0 -traceback")
 
-   elseif("${CMAKE_Fortran_COMPILER_ID}" STREQUAL "PGI")
+   elseif("${CMAKE_Fortran_COMPILER_ID}" STREQUAL "NVHPC" OR "${CMAKE_Fortran_COMPILER_ID}" STREQUAL "PGI")
+      set(CMAKE_Fortran_FLAGS_RELEASE "-O2 -Munroll=n:4 -Mfprelaxed -mp -tp=host -DNDEBUG")
+      set(CMAKE_Fortran_FLAGS_RELWITHDEBINFO "-O3 -g -tp=host -Minform=inform -DNDEBUG")
+      set(CMAKE_Fortran_FLAGS_DEBUG "-O0 -g -tp=host -Mbounds -Mchkptr")
 
-      # Note : Cray Fortran completely fails to provide any initial set of flags for build types.  Ticket has been submitted to HPE. --black27
-      # For now, don't append to existing flags ( since there are none ), just set the optimization and debug symbols flag ourselves.
-
-      # Suppress the warning about importing modules that have already been imported by other modules.
-      # The code has a lot of these dependencies.
+   # Note : Cray Fortran completely fails to provide any initial set of flags for build types.  Ticket has been submitted to HPE. --black27
+   # For now, don't append to existing flags ( since there are none ), just set the optimization and debug symbols flag ourselves.
+   # Suppress the warning about importing modules that have already been imported by other modules.
+   # The code has a lot of these dependencies.
    elseif("${CMAKE_Fortran_COMPILER_ID}" STREQUAL "Cray")
       set(CMAKE_Fortran_FLAGS_RELEASE "-O2 -DNDEBUG -M878")
       # G2 is the only level that doesn't disable OpenMP loop collapsing and still provides debug information.
       # A ticket has been submitted to ask HPE to update the -G# flag to be consistent with the "-g" flag in their C++ compiler.
-      set(CMAKE_Fortran_FLAGS_RELWITHDEBINFO "-g -O2 -DNDEBUG -h bounds -M878 -Ktrap=fp")
-      set(CMAKE_Fortran_FLAGS_DEBUG "-m2 -g -O0 -h bounds -M878 -Ktrap=fp")
+      set(CMAKE_Fortran_FLAGS_RELWITHDEBINFO "-O2 -G2 -DNDEBUG -h bounds -M878 -Ktrap=fp")
+      set(CMAKE_Fortran_FLAGS_DEBUG "-O0 -G2 -h bounds -M878 -Ktrap=fp")
    endif()
 
    # Add array bounds checking and asserts for non release builds.
